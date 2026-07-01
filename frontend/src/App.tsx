@@ -362,7 +362,7 @@ function App() {
   const mode = state?.mode ?? 'demo'
   const modelLabel = (state?.llm_model ?? '').split('/').pop() ?? ''
   const memories = state?.memories ?? []
-  const obsolete = memories.find((m) => m.status === 'obsolete')
+  const obsoleteMemories = memories.filter((m) => m.status === 'obsolete')
   const ledger = state?.ledger ?? []
   const lastLifecycle =
     forget?.lifecycle ?? feedback?.lifecycle ?? state?.lifecycle ?? []
@@ -963,23 +963,44 @@ function App() {
           <section className="panel">
             <p className="panel-kicker">Panel 04 · trust &amp; memory surgery</p>
             <h2 className="panel-title">Forget with proof</h2>
-            {!obsolete && !forget ? (
+            {obsoleteMemories.length === 0 && !forget ? (
               <div className="empty">
                 When a memory becomes obsolete, Hindsight can surgically forget it
                 with Cognee while preserving shared concepts referenced elsewhere.
               </div>
             ) : (
               <>
-                {obsolete && (
-                  <div className="row" style={{ marginTop: 0 }}>
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => handleForget(obsolete.id)}
-                      disabled={busy !== null}
-                    >
-                      {busy === 'forget' && <span className="spinner" />}
-                      Forget “{obsolete.label}”
-                    </button>
+                {obsoleteMemories.length > 0 && (
+                  <div className="surgery-queue">
+                    <p className="queue-copy">
+                      Company memory hygiene queue · {obsoleteMemories.length} obsolete candidates
+                    </p>
+                    {obsoleteMemories.map((memory) => (
+                      <div key={memory.id} className="surgery-candidate">
+                        <div className="sc-main">
+                          <p className="sc-label">{memory.label}</p>
+                          {memory.source && <p className="sc-source">{memory.source}</p>}
+                          <div className="chips">
+                            {memory.node_sets.map((ns) => (
+                              <span
+                                key={ns}
+                                className={ns === 'obsolete-candidate' ? 'chip obsolete' : 'chip'}
+                              >
+                                {ns}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <button
+                          className="btn btn-danger"
+                          onClick={() => handleForget(memory.id)}
+                          disabled={busy !== null}
+                        >
+                          {busy === 'forget' && <span className="spinner" />}
+                          Forget
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
                 {forget && (

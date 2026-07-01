@@ -568,15 +568,17 @@ def _forget_summary(
     graph_before: dict[str, int],
     graph_after: dict[str, int],
     mode: str,
+    target: MemoryItem | None,
 ) -> str:
+    label = target.label if target else "the selected memory"
     if mode != "cognee":
         return (
-            "The obsolete localStorage brainstorm no longer participates in Hindsight's recall. "
-            "The trusted Spanner source-of-truth decision and shared data concepts remain."
+            f"{label} no longer participates in Hindsight's recall. "
+            "Shared concepts referenced by other memories remain."
         )
     b, a = len(before), len(after)
     parts = [
-        f"The client-side-storage probe retrieved {b} memor{'y' if b == 1 else 'ies'} "
+        f"The targeted probe for {label} retrieved {b} memor{'y' if b == 1 else 'ies'} "
         f"before forget and {a} after."
     ]
     if graph_before and graph_after:
@@ -596,10 +598,14 @@ async def forget_obsolete(data_id: str) -> ForgetResponse:
     ops: list[OpEvent] = []
     catalog = _catalog(state.memories)
     target_uuid = cognee_client.cognee_data_uuid(data_id)
-    probe = (
-        "Could user session or profile state be stored in client-side localStorage to "
-        "cut Spanner cost? What prior decisions or experiments exist?"
-    )
+    if target:
+        tags = ", ".join(target.node_sets)
+        probe = (
+            f"What prior decisions, standards, incidents, or brainstorms are connected to "
+            f"{target.label}? Source: {target.source}. Tags: {tags}. Details: {target.text}"
+        )
+    else:
+        probe = "What prior decisions or obsolete brainstorms should be forgotten?"
     before: list[EvidenceItem] = []
     after: list[EvidenceItem] = []
     graph_before: dict[str, int] = {}
@@ -651,7 +657,7 @@ async def forget_obsolete(data_id: str) -> ForgetResponse:
         data_id=data_id,
         removed=[target.label] if target else [],
         preserved=_preserved_concepts(state.memories, target),
-        recall_after_forget=_forget_summary(before, after, graph_before, graph_after, mode),
+        recall_after_forget=_forget_summary(before, after, graph_before, graph_after, mode, target),
         lifecycle=lifecycle,
         mode=mode,
         before=before,

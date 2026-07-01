@@ -78,6 +78,45 @@ SEED_MEMORIES: list[MemoryItem] = [
         source="Slack thread · #eng-decisions",
     ),
     MemoryItem(
+        id="brainstorm-public-grpc",
+        label="Direct Public gRPC Exposure Spike",
+        text=(
+            "Spike: expose internal gRPC services directly to mobile and partner clients "
+            "to remove the API gateway hop. The idea was rejected and superseded by "
+            "ADR-041, which requires all external traffic to enter through the API gateway "
+            "for authentication, rate limiting, and WAF enforcement. Status: obsolete candidate."
+        ),
+        node_sets=["api", "platform", "security", "brainstorm", "obsolete-candidate"],
+        status="obsolete",
+        source="Design spike · Platform review",
+    ),
+    MemoryItem(
+        id="brainstorm-long-sessions",
+        label="Long-Lived Login Session Proposal",
+        text=(
+            "Brainstorm: make login sessions last 30 days with long-lived browser cookies "
+            "so users rarely need to re-authenticate. Later superseded by ADR-014, which "
+            "requires 15-minute JWT access tokens plus rotating refresh tokens and forbids "
+            "long-lived or non-expiring sessions. Status: obsolete candidate."
+        ),
+        node_sets=["auth", "security", "brainstorm", "obsolete-candidate"],
+        status="obsolete",
+        source="Product brainstorm · Identity backlog",
+    ),
+    MemoryItem(
+        id="brainstorm-raw-pii-logs",
+        label="Raw Checkout Logging Debug Plan",
+        text=(
+            "Brainstorm: temporarily log raw checkout requests, including email address "
+            "and IP, to debug an intermittent payment issue. Later superseded by the PII "
+            "Logging Restriction, which requires hashed user_id and forbids raw PII in "
+            "logs, traces, or analytics events. Status: obsolete candidate."
+        ),
+        node_sets=["privacy", "logging", "brainstorm", "obsolete-candidate"],
+        status="obsolete",
+        source="Incident debug plan · Slack",
+    ),
+    MemoryItem(
         id="api-conv-02",
         label="Service API & RPC Conventions",
         text=(

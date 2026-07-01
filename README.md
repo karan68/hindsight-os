@@ -8,7 +8,7 @@ Most AI memory only grows. Hindsight OS asks the harder question: what happens w
 
 Hindsight OS is a decision-memory console for teams and agents. It uses Cognee as the persistent memory layer, then adds a conservative conflict classifier and a memory-integrity workflow on top.
 
-The demo starts with 18 seeded engineering memories: ADRs, incidents, security standards, UX experiments, obsolete brainstorms, and service architecture notes. On a local Cognee run this builds a few hundred graph nodes and more than a thousand edges; exact extraction counts can vary between runs.
+The demo starts with 21 seeded engineering memories: ADRs, incidents, security standards, UX experiments, obsolete brainstorms, and service architecture notes. On a local Cognee run this builds a few hundred graph nodes and more than a thousand edges; exact extraction counts can vary between runs.
 
 When a new proposal arrives, Hindsight OS:
 

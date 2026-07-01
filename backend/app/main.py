@@ -15,6 +15,13 @@ from app.service import (
     warm_recall,
 )
 from app.state import load_state
+from app.workstream import (
+    WorkstreamEvent,
+    WorkstreamIngestResponse,
+    WorkstreamRecord,
+    ingest_workstream_event,
+    list_workstream_events,
+)
 
 # override=True so backend/.env wins over any pre-existing shell env vars
 # (e.g. a global Ollama LLM_MODEL) that would otherwise leak into Cognee.
@@ -61,6 +68,16 @@ async def graph() -> GraphSnapshot:
 @app.post("/proposal/check")
 async def proposal_check(request: ProposalRequest):
     return await check_proposal(request)
+
+
+@app.post("/events/ingest", response_model=WorkstreamIngestResponse)
+async def event_ingest(request: WorkstreamEvent):
+    return await ingest_workstream_event(request)
+
+
+@app.get("/events", response_model=list[WorkstreamRecord])
+def events():
+    return list_workstream_events()
 
 
 @app.post("/ask")

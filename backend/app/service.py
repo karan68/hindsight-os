@@ -204,6 +204,8 @@ def _demo_warning(proposal: str, state, ops: list[OpEvent]) -> WarningCard:
     evidence = make_evidence(state.memories, proposal)
     record(ops, "classify", {"mode": "demo"}, detail="deterministic keyword classifier")
     warning = classify_proposal(proposal, evidence)
+    value = getattr(warning.classification, "value", warning.classification)
+    warning.recommended_control = _recommended_control(str(value), False)  # type: ignore[assignment]
     warning.mode = "demo"
     warning.reasoning = warning.summary
     warning.raw_context = "\n\n".join(f"[{ev.label}] {ev.snippet}" for ev in evidence)
@@ -326,7 +328,7 @@ def _attach_retrieval(
         )
 
 
-async def check_proposal(request: ProposalRequest):
+async def analyze_proposal_text(proposal: str, *, persist_latest: bool = True) -> WarningCard:
     state = load_state()
     if not state.seeded:
         await seed_demo()
@@ -340,7 +342,7 @@ async def check_proposal(request: ProposalRequest):
     try:
         # 1. REAL vector retrieval (CHUNKS = similarity). Wide candidate set so
         #    canonical memories survive the session-artifact filter.
-        raw_chunks = await cognee_client.retrieve_chunks(DEFAULT_DATASET, request.proposal, ops, top_k=12)
+        raw_chunks = await cognee_client.retrieve_chunks(DEFAULT_DATASET, proposal, ops, top_k=12)
         evidence, context_blocks, raw_context = _chunks_to_evidence(raw_chunks, catalog)
 
         # 2. REAL graph-native retrieval (GRAPH_COMPLETION, relationship facts).
@@ -351,7 +353,7 @@ async def check_proposal(request: ProposalRequest):
         graph_nodes: list[str] = []
         try:
             graph = await cognee_client.retrieve_graph_context(
-                DEFAULT_DATASET, request.proposal, ops, depth=2, top_k=6
+                DEFAULT_DATASET, proposal, ops, depth=2, top_k=6
             )
             graph_context = graph.get("context", "")
             reasoning_path = graph.get("facts", [])
@@ -369,24 +371,29 @@ async def check_proposal(request: ProposalRequest):
                 "GRAPH REASONING (multi-hop facts Cognee traversed from the knowledge graph):\n"
                 + "\n".join(f"- {fact}" for fact in reasoning_path[:12])
             )
-        verdict = await cognee_client.classify_with_llm(request.proposal, combined_blocks, ops)
-        warning = _verdict_to_warning(request.proposal, verdict, evidence, raw_context, ops)
+        verdict = await cognee_client.classify_with_llm(proposal, combined_blocks, ops)
+        warning = _verdict_to_warning(proposal, verdict, evidence, raw_context, ops)
 
         # 4. Attach the reasoning path + the vector-vs-graph comparison.
         _attach_retrieval(
             warning, evidence, graph_context, reasoning_path, graph_nodes, state.memories
         )
     except cognee_client.CogneeUnavailable:
-        warning = _demo_warning(request.proposal, state, ops)
+        warning = _demo_warning(proposal, state, ops)
     except Exception as exc:  # Cognee/LLM error -> deterministic fallback, but show the error
         print(f"[check] Cognee path failed, using deterministic fallback: {exc}")
         record(ops, "fallback", {"reason": type(exc).__name__}, status="error", detail=str(exc))
-        warning = _demo_warning(request.proposal, state, ops)
+        warning = _demo_warning(proposal, state, ops)
 
     warning.latency_ms = int((time.perf_counter() - started) * 1000)
     warning.session_id = f"session-{warning.id}"
-    update_latest_warning(warning, [op.op for op in ops])
+    if persist_latest:
+        update_latest_warning(warning, [op.op for op in ops])
     return warning
+
+
+async def check_proposal(request: ProposalRequest):
+    return await analyze_proposal_text(request.proposal, persist_latest=True)
 
 
 def _demo_answer(question: str, evidence: list[EvidenceItem]) -> str:

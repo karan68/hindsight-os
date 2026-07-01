@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.cognee_system/
+.cognee_data/
+backend/.cognee_system/
+backend/.cognee_data/
+backend/app_state.json
+frontend/node_modules/
+frontend/dist/

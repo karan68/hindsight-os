@@ -99,6 +99,22 @@ Minimum behavior:
 - Send a `slack` event to `/events/ingest`.
 - Reply in-thread with warning, evidence, and recommended control.
 
+Current local routes:
+
+- `POST /integrations/slack/events`
+- Verifies Slack request signatures when `SLACK_SIGNING_SECRET` is configured.
+- Handles Events API `url_verification` challenges.
+- Ignores Slack retry deliveries using `x-slack-retry-num` and relies on idempotent workstream event ids.
+- Acknowledges Slack quickly and processes the Hindsight work in a background task.
+- Posts thread replies through `chat.postMessage` when `SLACK_BOT_TOKEN` is configured.
+- `POST /integrations/slack/events/test` runs the same event processing inline for local validation without real Slack credentials.
+
+Required live Slack configuration:
+
+- `SLACK_SIGNING_SECRET`: verifies `X-Slack-Signature` and `X-Slack-Request-Timestamp`.
+- `SLACK_BOT_TOKEN`: posts thread replies via `chat.postMessage` with `chat:write` scope.
+- `HINDSIGHT_SLACK_ALLOW_UNSIGNED=true`: local-only bypass for unsigned requests; do not use for a real Slack request URL.
+
 Tests before moving on:
 
 - Bot replies only when invoked.

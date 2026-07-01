@@ -76,8 +76,8 @@ _EVENTS_FILE = Path(
 _MAX_EVENTS = 100
 
 _EXPLICIT_PATTERNS = (
-    r"\b@hindsight\b",
-    r"\b/hindsight\b",
+    r"(?<!\w)@hindsight\b",
+    r"(?<!\w)/hindsight\b",
     r"\bhindsight\s+check\b",
     r"\bremember\s+this\b",
     r"\bstore\s+this\s+(?:in|as)\s+memory\b",

@@ -401,7 +401,7 @@ def _load_records() -> list[WorkstreamRecord]:
 
 def _save_record(record: WorkstreamRecord) -> None:
     _EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    records = [record, *_load_records()][:_MAX_EVENTS]
+    records = [record, *[item for item in _load_records() if item.id != record.id]][:_MAX_EVENTS]
     _EVENTS_FILE.write_text(
         json.dumps([item.model_dump(mode="json") for item in records], indent=2),
         encoding="utf-8",

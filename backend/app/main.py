@@ -15,6 +15,13 @@ from app.service import (
     submit_feedback,
     warm_recall,
 )
+from app.simulator import (
+    SimulatorRunRequest,
+    SimulatorRunResponse,
+    SimulatorScenario,
+    list_simulator_scenarios,
+    run_simulator,
+)
 from app.state import load_state
 from app.workstream import (
     WorkstreamEvent,
@@ -84,6 +91,16 @@ def events():
 @app.post("/integrations/github/pr/check", response_model=GitHubPrCheckResponse)
 async def github_pr_check(request: GitHubPrCheckRequest):
     return await check_github_pr(request)
+
+
+@app.get("/simulator/scenarios", response_model=list[SimulatorScenario])
+def simulator_scenarios():
+    return list_simulator_scenarios()
+
+
+@app.post("/simulator/run", response_model=SimulatorRunResponse)
+async def simulator_run(request: SimulatorRunRequest):
+    return await run_simulator(request)
 
 
 @app.post("/ask")

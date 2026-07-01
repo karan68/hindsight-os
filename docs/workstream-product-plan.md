@@ -50,6 +50,13 @@ Tests before moving on:
 
 Goal: replay realistic Slack, GitHub, and Codex payloads without external API risk.
 
+Current local routes:
+
+- `GET /simulator/scenarios`
+- `POST /simulator/run`
+
+The simulator replays fixed workstream payloads through the same `/events/ingest` pipeline and grades each result against an explicit expectation. It covers low-risk Slack noise, low-signal reactions, a GitHub source-of-truth conflict, a Slack authority-spoof claim, and a Codex memory-write claim.
+
 Tests before moving on:
 
 - Slack authority-spoof text is checked and can be quarantined.

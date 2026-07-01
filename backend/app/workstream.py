@@ -141,6 +141,35 @@ def _metadata_text(metadata: dict[str, Any]) -> str:
     return "\n".join(values)
 
 
+def _analysis_text(text: str) -> str:
+    """Remove integration command wrappers before retrieval/classification.
+
+    Commands such as `/hindsight check` are routing signals, not proposal
+    content. Leaving them as the first line can cause retrieval to search the
+    command instead of the memory-relevant change.
+    """
+    cleaned: list[str] = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if lowered in {"/hindsight", "/hindsight check", "@hindsight", "@hindsight check"}:
+            continue
+        if lowered.startswith("/hindsight "):
+            remainder = stripped.split(maxsplit=1)[1]
+            if remainder.lower() in {"check", "verify", "review"}:
+                continue
+            cleaned.append(remainder)
+            continue
+        if lowered.startswith("@hindsight "):
+            remainder = stripped.split(maxsplit=1)[1]
+            if remainder.lower() in {"check", "verify", "review"}:
+                continue
+            cleaned.append(remainder)
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
 def _screen_event(event: WorkstreamEvent) -> WorkstreamScreening:
     if event.event_type.lower() in _LOW_SIGNAL_EVENT_TYPES:
         return WorkstreamScreening(
@@ -191,21 +220,22 @@ def _screen_event(event: WorkstreamEvent) -> WorkstreamScreening:
 
 
 def _event_to_proposal(event: WorkstreamEvent) -> str:
+    content = _analysis_text(event.content)
     if event.source == "github":
         changed_files = event.metadata.get("changed_files") or event.metadata.get("files") or []
         files = ", ".join(str(item) for item in changed_files[:12]) if isinstance(changed_files, list) else ""
         return (
             f"GitHub {event.event_type} by {event.actor or 'unknown actor'}:\n"
-            f"{event.content.strip()}\n"
+            f"{content}\n"
             f"Changed files: {files}"
         ).strip()
     if event.source == "slack":
-        return f"Slack message by {event.actor or 'unknown actor'}:\n{event.content.strip()}"
+        return f"Slack message by {event.actor or 'unknown actor'}:\n{content}"
     if event.source == "codex":
-        return f"Codex/agent session event by {event.actor or 'unknown actor'}:\n{event.content.strip()}"
+        return f"Codex/agent session event by {event.actor or 'unknown actor'}:\n{content}"
     if event.source == "jira":
-        return f"Jira {event.event_type} by {event.actor or 'unknown actor'}:\n{event.content.strip()}"
-    return event.content.strip()
+        return f"Jira {event.event_type} by {event.actor or 'unknown actor'}:\n{content}"
+    return content
 
 
 def _outcome_for_warning(warning: WarningCard) -> WorkstreamOutcome:

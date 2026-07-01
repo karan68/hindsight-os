@@ -108,11 +108,13 @@ Current local routes:
 - Acknowledges Slack quickly and processes the Hindsight work in a background task.
 - Posts thread replies through `chat.postMessage` when `SLACK_BOT_TOKEN` is configured.
 - `POST /integrations/slack/events/test` runs the same event processing inline for local validation without real Slack credentials.
+- Local live fallback when HTTP tunneling is blocked: `python -m app.slack_socket` uses Slack Socket Mode and the same event processor.
 
 Required live Slack configuration:
 
 - `SLACK_SIGNING_SECRET`: verifies `X-Slack-Signature` and `X-Slack-Request-Timestamp`.
 - `SLACK_BOT_TOKEN`: posts thread replies via `chat.postMessage` with `chat:write` scope.
+- `SLACK_APP_TOKEN`: app-level token with `connections:write`, required for Socket Mode.
 - `HINDSIGHT_SLACK_ALLOW_UNSIGNED=true`: local-only bypass for unsigned requests; do not use for a real Slack request URL.
 
 Tests before moving on:

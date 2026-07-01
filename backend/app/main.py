@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.github_integration import GitHubPrCheckRequest, GitHubPrCheckResponse, check_github_pr
 from app.models import AskRequest, DemoState, FeedbackRequest, GraphSnapshot, ProposalRequest
 from app.service import (
     ask_memory,
@@ -78,6 +79,11 @@ async def event_ingest(request: WorkstreamEvent):
 @app.get("/events", response_model=list[WorkstreamRecord])
 def events():
     return list_workstream_events()
+
+
+@app.post("/integrations/github/pr/check", response_model=GitHubPrCheckResponse)
+async def github_pr_check(request: GitHubPrCheckRequest):
+    return await check_github_pr(request)
 
 
 @app.post("/ask")

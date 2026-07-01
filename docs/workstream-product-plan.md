@@ -66,6 +66,14 @@ Minimum behavior:
 - Read PR title, body, changed files, and a small diff summary.
 - Send a `github` event to `/events/ingest`.
 - Post or update one Hindsight PR comment with verdict, evidence, and action.
+- Show only the strongest primary evidence in the PR comment; keep the full retrieved set in the event record.
+
+Current local route:
+
+- `POST /integrations/github/pr/check`
+- Reads the PR and changed-file patches through the authenticated GitHub CLI.
+- Sends title, body, changed files, and a bounded diff summary into the workstream pipeline.
+- Posts or updates one marked PR comment.
 
 Tests before moving on:
 

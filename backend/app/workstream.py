@@ -57,6 +57,7 @@ class WorkstreamRecord(BaseModel):
     warning_id: str | None = None
     classification: str | None = None
     recommended_control: str | None = None
+    primary_evidence_labels: list[str] = Field(default_factory=list)
     evidence_labels: list[str] = Field(default_factory=list)
     ops: list[OpEvent] = Field(default_factory=list)
 
@@ -129,6 +130,11 @@ def _matched(patterns: tuple[str, ...], text: str) -> list[str]:
     return [pattern for pattern in patterns if re.search(pattern, text, re.IGNORECASE)]
 
 
+def _contains_term(text: str, term: str) -> bool:
+    pattern = r"(?<![a-z0-9])" + re.escape(term.lower()) + r"(?![a-z0-9])"
+    return bool(re.search(pattern, text))
+
+
 def _metadata_text(metadata: dict[str, Any]) -> str:
     values: list[str] = []
     for key in ("title", "body", "summary", "diff", "comment"):
@@ -139,6 +145,21 @@ def _metadata_text(metadata: dict[str, Any]) -> str:
     if isinstance(changed_files, list):
         values.extend(str(item) for item in changed_files)
     return "\n".join(values)
+
+
+def _metadata_analysis_blocks(metadata: dict[str, Any]) -> list[str]:
+    blocks: list[str] = []
+    for key, label in (
+        ("title", "Title"),
+        ("body", "Body"),
+        ("summary", "Summary"),
+        ("diff", "Diff"),
+        ("comment", "Comment"),
+    ):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            blocks.append(f"{label}:\n{_analysis_text(value)}")
+    return blocks
 
 
 def _analysis_text(text: str) -> str:
@@ -182,7 +203,7 @@ def _screen_event(event: WorkstreamEvent) -> WorkstreamScreening:
     text = f"{event.content}\n{_metadata_text(event.metadata)}".lower()
     explicit = _matched(_EXPLICIT_PATTERNS, text)
     decision = _matched(_DECISION_PATTERNS, text)
-    protected_terms = [term for term in _PROTECTED_TERMS if term in text]
+    protected_terms = [term for term in _PROTECTED_TERMS if _contains_term(text, term)]
 
     changed_files = event.metadata.get("changed_files") or event.metadata.get("files") or []
     changed_text = "\n".join(str(item).replace("\\", "/").lower() for item in changed_files)
@@ -224,9 +245,11 @@ def _event_to_proposal(event: WorkstreamEvent) -> str:
     if event.source == "github":
         changed_files = event.metadata.get("changed_files") or event.metadata.get("files") or []
         files = ", ".join(str(item) for item in changed_files[:12]) if isinstance(changed_files, list) else ""
+        blocks = [content, *_metadata_analysis_blocks(event.metadata)]
+        body = "\n\n".join(block for block in blocks if block.strip())
         return (
             f"GitHub {event.event_type} by {event.actor or 'unknown actor'}:\n"
-            f"{content}\n"
+            f"{body}\n"
             f"Changed files: {files}"
         ).strip()
     if event.source == "slack":
@@ -247,6 +270,126 @@ def _outcome_for_warning(warning: WarningCard) -> WorkstreamOutcome:
     if warning.recommended_action == "allow":
         return "allowed"
     return "needs_human_review"
+
+
+def _unique_labels(*groups: list[str]) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for label in group or []:
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+    return labels
+
+
+def evidence_labels(warning: WarningCard | None) -> list[str]:
+    if warning is None:
+        return []
+    vector_labels = [item.label for item in warning.evidence]
+    return _unique_labels(vector_labels, warning.graph_cited, warning.conflicting_memories)
+
+
+_LABEL_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "architecture",
+    "branch",
+    "change",
+    "changes",
+    "demo",
+    "file",
+    "for",
+    "github",
+    "in",
+    "integration",
+    "memory",
+    "of",
+    "on",
+    "or",
+    "payload",
+    "pr",
+    "product",
+    "proof",
+    "pull",
+    "request",
+    "risk",
+    "service",
+    "source",
+    "the",
+    "to",
+    "truth",
+    "warning",
+}
+
+
+def _label_tokens(label: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", label.lower())
+        if len(token) > 2 and token not in _LABEL_STOPWORDS
+    }
+
+
+def primary_evidence_labels(warning: WarningCard | None, *, limit: int = 3) -> list[str]:
+    if warning is None:
+        return []
+
+    cited = {label.lower(): idx for idx, label in enumerate(warning.conflicting_memories or [])}
+    graph_cited = {label.lower() for label in warning.graph_cited or []}
+    vector_cited = {label.lower() for label in warning.vector_cited or []}
+    summary = (warning.summary or "").lower()
+    proposal_summary = f"{warning.proposal or ''}\n{warning.summary or ''}".lower()
+    evidence_by_label = {item.label: item for item in warning.evidence}
+    scored: list[tuple[int, int, str]] = []
+    for idx, label in enumerate(evidence_labels(warning)):
+        evidence = evidence_by_label.get(label)
+        node_sets = {item.lower() for item in (evidence.node_sets if evidence else [])}
+        evidence_text = f"{label} {evidence.snippet if evidence else ''} {evidence.raw if evidence else ''}"
+        evidence_overlap = len(_label_tokens(evidence_text) & set(re.findall(r"[a-z0-9]+", proposal_summary)))
+        source_truth_match = "source of truth" in label.lower() and "source of truth" in proposal_summary
+        summary_match = label.lower() in summary
+        cited_match = label.lower() in cited
+        graph_topic_match = label.lower() in graph_cited and source_truth_match
+
+        if not (cited_match or summary_match or graph_topic_match or evidence_overlap >= 2):
+            continue
+
+        score = 0
+        if cited_match:
+            score += 100 - cited[label.lower()]
+        if label.lower() in graph_cited:
+            score += 45
+        if label.lower() in vector_cited:
+            score += 25
+        if summary_match:
+            score += 35
+        score += 6 * evidence_overlap
+        if source_truth_match:
+            score += 170
+        if "source of truth" in label.lower() and "authoritative" in proposal_summary:
+            score += 80
+        if "trusted" in node_sets:
+            score += 25
+        if "architecture-decision" in node_sets:
+            score += 20
+        if "incident-learning" in node_sets:
+            score += 18
+        if "policy" in node_sets or "compliance" in node_sets:
+            score += 12
+        if label.startswith("ADR-"):
+            score += 15
+        if label.startswith("INC-"):
+            score += 12
+        if evidence and (evidence.status == "obsolete" or "brainstorm" in node_sets):
+            score -= 80
+        scored.append((score, -idx, label))
+
+    scored.sort(reverse=True)
+    if scored:
+        return [label for _, _, label in scored[:limit]]
+    return evidence_labels(warning)[:limit]
 
 
 def _load_records() -> list[WorkstreamRecord]:
@@ -306,7 +449,8 @@ async def ingest_workstream_event(event: WorkstreamEvent) -> WorkstreamIngestRes
             getattr(warning.classification, "value", str(warning.classification)) if warning else None
         ),
         recommended_control=warning.recommended_control if warning else None,
-        evidence_labels=[item.label for item in warning.evidence] if warning else [],
+        primary_evidence_labels=primary_evidence_labels(warning),
+        evidence_labels=evidence_labels(warning),
         ops=ops,
     )
     _save_record(persisted)

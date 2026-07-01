@@ -1,7 +1,7 @@
 // Typed client for the Hindsight OS backend.
 // Base URL is overridable so the same UI can point at a remote/Cognee Cloud-backed
 // instance later without code changes.
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
 
 export type Classification =
   | 'conflict'

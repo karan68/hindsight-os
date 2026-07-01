@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.github_integration import GitHubPrCheckRequest, GitHubPrCheckResponse, check_github_pr
 from app.models import AskRequest, DemoState, FeedbackRequest, GraphSnapshot, ProposalRequest
@@ -23,16 +22,8 @@ from app.simulator import (
     list_simulator_scenarios,
     run_simulator,
 )
-from app.slack_integration import (
-    SlackEventAck,
-    SlackLocalTestRequest,
-    SlackProcessResponse,
-    SlackSignatureError,
-    parse_slack_payload,
-    process_slack_event_payload,
-    verify_slack_signature,
-)
 from app.state import load_state
+from app.telegram_integration import TelegramLocalTestRequest, TelegramProcessResponse, process_telegram_update
 from app.workstream import (
     WorkstreamEvent,
     WorkstreamIngestResponse,
@@ -103,38 +94,9 @@ async def github_pr_check(request: GitHubPrCheckRequest):
     return await check_github_pr(request)
 
 
-@app.post("/integrations/slack/events")
-async def slack_events(request: Request, background_tasks: BackgroundTasks):
-    body = await request.body()
-    try:
-        signature_verified = verify_slack_signature(request.headers, body)
-        payload = parse_slack_payload(body)
-    except SlackSignatureError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if payload.get("type") == "url_verification":
-        return JSONResponse({"challenge": payload.get("challenge", "")})
-
-    if request.headers.get("x-slack-retry-num"):
-        return SlackEventAck(
-            accepted=False,
-            reason="Slack retry ignored; original event id is idempotent in the workstream log",
-            signature_verified=signature_verified,
-            retry_ignored=True,
-        )
-
-    # Slack expects a 2xx acknowledgement within three seconds. Process the
-    # Hindsight/Cognee work after ack; use /integrations/slack/events/test for
-    # an inline local proof run.
-    background_tasks.add_task(process_slack_event_payload, payload, post_message=True)
-    return SlackEventAck(signature_verified=signature_verified)
-
-
-@app.post("/integrations/slack/events/test", response_model=SlackProcessResponse)
-async def slack_events_test(request: SlackLocalTestRequest):
-    return await process_slack_event_payload(request.payload, post_message=request.post_message)
+@app.post("/integrations/telegram/update/test", response_model=TelegramProcessResponse)
+async def telegram_update_test(request: TelegramLocalTestRequest):
+    return await process_telegram_update(request.update, post_message=request.post_message)
 
 
 @app.get("/simulator/scenarios", response_model=list[SimulatorScenario])

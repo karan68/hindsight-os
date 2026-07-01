@@ -1,6 +1,6 @@
 # Hindsight OS Workstream Product Plan
 
-This plan intentionally keeps the existing `http://localhost:5173/` UI unchanged as the backup demo. The new product direction is a memory-integrity layer for real workstreams: GitHub PRs, Slack threads, Codex/agent sessions, and later Jira.
+This plan intentionally keeps the existing `http://localhost:5173/` UI unchanged as the backup demo. The new product direction is a memory-integrity layer for real workstreams: GitHub PRs, Telegram chats, Codex/agent sessions, and later Jira.
 
 ## Product Principle
 
@@ -21,7 +21,7 @@ Goal: prove each real integration can send or receive one event before building 
 Tests before moving on:
 
 - GitHub: read one PR and post one test comment without leaking tokens.
-- Slack: receive one bot mention and reply in the same thread.
+- Telegram: receive one bot message and reply from local long polling.
 - Codex: capture one real session message through a confirmed API, log, wrapper, or export path.
 
 Do not claim an integration is real until its gate passes.
@@ -48,18 +48,18 @@ Tests before moving on:
 
 ## Phase 2: Local Simulator
 
-Goal: replay realistic Slack, GitHub, and Codex payloads without external API risk.
+Goal: replay realistic Telegram, GitHub, and Codex payloads without external API risk.
 
 Current local routes:
 
 - `GET /simulator/scenarios`
 - `POST /simulator/run`
 
-The simulator replays fixed workstream payloads through the same `/events/ingest` pipeline and grades each result against an explicit expectation. It covers low-risk Slack noise, low-signal reactions, a GitHub source-of-truth conflict, a Slack authority-spoof claim, and a Codex memory-write claim.
+The simulator replays fixed workstream payloads through the same `/events/ingest` pipeline and grades each result against an explicit expectation. It covers low-risk Telegram noise, low-signal reactions, a GitHub source-of-truth conflict, a Telegram authority-spoof claim, and a Codex memory-write claim.
 
 Tests before moving on:
 
-- Slack authority-spoof text is checked and can be quarantined.
+- Telegram authority-spoof text is checked and can be quarantined.
 - GitHub PR touching protected paths is checked.
 - Codex memory-write claim is checked.
 - Casual chat/reaction events are skipped.
@@ -89,39 +89,32 @@ Tests before moving on:
 - API failures degrade cleanly.
 - Secrets stay out of logs and git.
 
-## Phase 4: Slack Integration
+## Phase 4: Telegram Integration
 
-Goal: thread-level memory warnings in team conversations.
+Goal: free local chat warnings without a public tunnel.
 
 Minimum behavior:
 
-- Listen only for bot mentions or slash commands in demo channels.
-- Send a `slack` event to `/events/ingest`.
-- Reply in-thread with warning, evidence, and recommended control.
+- Listen through Telegram Bot API long polling.
+- Send a `telegram` event to `/events/ingest`.
+- Reply to the message with warning, evidence, and recommended control.
 
 Current local routes:
 
-- `POST /integrations/slack/events`
-- Verifies Slack request signatures when `SLACK_SIGNING_SECRET` is configured.
-- Handles Events API `url_verification` challenges.
-- Ignores Slack retry deliveries using `x-slack-retry-num` and relies on idempotent workstream event ids.
-- Acknowledges Slack quickly and processes the Hindsight work in a background task.
-- Posts thread replies through `chat.postMessage` when `SLACK_BOT_TOKEN` is configured.
-- `POST /integrations/slack/events/test` runs the same event processing inline for local validation without real Slack credentials.
-- Local live fallback when HTTP tunneling is blocked: `python -m app.slack_socket` uses Slack Socket Mode and the same event processor.
+- `POST /integrations/telegram/update/test`
+- `python -m app.telegram_polling`
+- Uses outbound long polling, so it works from localhost without ngrok or Socket Mode.
+- Posts replies through Telegram `sendMessage` when `TELEGRAM_BOT_TOKEN` is configured.
 
-Required live Slack configuration:
+Required live Telegram configuration:
 
-- `SLACK_SIGNING_SECRET`: verifies `X-Slack-Signature` and `X-Slack-Request-Timestamp`.
-- `SLACK_BOT_TOKEN`: posts thread replies via `chat.postMessage` with `chat:write` scope.
-- `SLACK_APP_TOKEN`: app-level token with `connections:write`, required for Socket Mode.
-- `HINDSIGHT_SLACK_ALLOW_UNSIGNED=true`: local-only bypass for unsigned requests; do not use for a real Slack request URL.
+- `TELEGRAM_BOT_TOKEN`: create with BotFather. Do not commit it.
 
 Tests before moving on:
 
 - Bot replies only when invoked.
-- Slack retries are idempotent.
-- Authority-spoof and instruction-override examples are quarantined.
+- Repeated updates are idempotent by event id.
+- Authority-spoof and instruction-override examples are warned or quarantined.
 - Casual messages are skipped.
 
 ## Phase 5: Codex / Agent Session Integration
@@ -151,7 +144,7 @@ The console should show:
 - graph/proof links
 - memory surgery controls
 
-Warnings stay in GitHub, Slack, and Codex. Governance and audit live in the console.
+Warnings stay in GitHub, Telegram, and Codex. Governance and audit live in the console.
 
 ## Phase 7: Rehearsal Gate
 
@@ -159,7 +152,7 @@ Run the full script twice:
 
 1. Seed trusted memory.
 2. Trigger a GitHub PR conflict.
-3. Trigger a Slack authority-spoof warning.
+3. Trigger a Telegram authority-spoof warning.
 4. Trigger a Codex memory-write claim.
 5. Show all events in the console.
 6. Mark a warning useful and verify ledger/improve behavior.

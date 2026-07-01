@@ -15,7 +15,7 @@ from app.service import analyze_proposal_text
 from app.trace import record
 
 
-WorkstreamSource = Literal["github", "slack", "codex", "jira", "simulator"]
+WorkstreamSource = Literal["github", "telegram", "codex", "jira", "simulator"]
 WorkstreamOutcome = Literal[
     "ignored_low_risk",
     "allowed",
@@ -252,8 +252,8 @@ def _event_to_proposal(event: WorkstreamEvent) -> str:
             f"{body}\n"
             f"Changed files: {files}"
         ).strip()
-    if event.source == "slack":
-        return f"Slack message by {event.actor or 'unknown actor'}:\n{content}"
+    if event.source == "telegram":
+        return f"Telegram message by {event.actor or 'unknown actor'}:\n{content}"
     if event.source == "codex":
         return f"Codex/agent session event by {event.actor or 'unknown actor'}:\n{content}"
     if event.source == "jira":

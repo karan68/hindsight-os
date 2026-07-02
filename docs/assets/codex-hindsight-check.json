@@ -1,6 +1,6 @@
 {
-  "session_id": "codex-live-screenshot-proof",
-  "event_id": "codex-codex-live-screenshot-proof-073f244f015b",
+  "session_id": "codex-live-terminal-proof",
+  "event_id": "codex-codex-live-terminal-proof-c83cb099d47c",
   "outcome": "warned",
   "classification": "conflict",
   "recommended_control": "warn",

@@ -6,6 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BackendDir = Join-Path $RepoRoot "backend"
@@ -41,32 +43,22 @@ if ([string]::IsNullOrWhiteSpace($UserMessage)) {
 
 Set-Location $RepoRoot
 
-$codexPrompt = @"
-You are working in this repository. The user gave you this instruction for future coding sessions:
-
-"$UserMessage"
-
-Write the memory note you would save for future coding sessions. Keep it under 80 words.
-"@
-
 Write-Host "user" -ForegroundColor Cyan
 Write-Host $UserMessage -ForegroundColor White
 Pause-ForReplay
 
-$codexCommand = "codex exec --color always -s read-only -C . --output-last-message backend\codex_live_last_message.txt -"
+$codexCommand = "codex exec --color never -s read-only -C . --output-last-message backend\codex_live_last_message.txt `"$UserMessage`""
 Write-Host ""
 Write-Host "PS $RepoRoot> $codexCommand" -ForegroundColor Green
 Add-RawLine "PS $RepoRoot> $codexCommand"
 
-$codexPrompt | codex exec --color always -s read-only -C . --output-last-message $CodexLastMessage - 2>&1 | Tee-Object -FilePath $RawTranscript -Append
+& codex exec --color never -s read-only -C . --output-last-message $CodexLastMessage $UserMessage 2>&1 | Tee-Object -FilePath $RawTranscript -Append
 
 Pause-ForReplay
 
 Set-Location $BackendDir
 if (-not $LiveCognee) {
     .\.venv\Scripts\python.exe -c "from app.service import activate_demo_mode; activate_demo_mode()" | Out-Null
-    Add-RawLine ""
-    Add-RawLine "Hindsight mode: deterministic demo mode for reliable replay"
 }
 
 $hindsightCommand = ".\.venv\Scripts\python.exe -m app.codex_session --file codex_live_last_message.txt --session-id codex-live-terminal-proof --event-type agent_memory_write --source-label codex-terminal-replay"

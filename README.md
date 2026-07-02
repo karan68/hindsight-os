@@ -32,6 +32,22 @@ Then, for every new proposal / message / PR / agent action / draft, Hindsight OS
 6. **Learns** from human feedback (`session.add_feedback → improve`) and records it in a trust ledger.
 7. **Forgets** obsolete memory (`forget`) with before/after recall + graph proof.
 
+```mermaid
+flowchart LR
+  E["New content<br/>PR · message · agent action · draft"] --> S{"Cheap local<br/>screen"}
+  S -- "low-risk" --> SKIP["ignored_low_risk<br/>(no Cognee call)"]
+  S -- "memory-risk" --> R["Cognee recall<br/>CHUNKS + GRAPH_COMPLETION"]
+  R --> C["Classify + Sentinel"]
+  C -- "aligned" --> A["allow"]
+  C -- "contradicts trusted memory" --> W["warn in the surface"]
+  C -- "poisoning" --> Q["quarantine<br/>refused entry to improve()"]
+  W --> F["feedback → improve<br/>(trust ledger)"]
+  Q --> F
+  F --> G["forget obsolete<br/>with before/after proof"]
+```
+
+Only memory-risk events pay for a Cognee recall + LLM classify; everything else is screened out cheaply — the same tiering that lets this scale from one repo to a whole platform's content firehose.
+
 ## Where this applies — one pattern, many surfaces
 
 Underneath, Hindsight is one primitive: **remember verdicts → recall them at the moment of creation → judge the new thing against them → warn or quarantine in place → learn → forget.** That pattern reaches far beyond engineering decisions.

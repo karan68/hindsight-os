@@ -114,7 +114,7 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
   - conflict -> warn
   - instruction override -> quarantine
   - non-authoritative Redis cache -> allow/confirmation
-- [ ] Record the exact expected demo script.
+- [x] Record the exact expected demo script in `docs/demo-script.md`.
 
 ### 2. Cognee Reliability Pass
 
@@ -135,6 +135,7 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 - [x] Send one real Codex CLI transcript into the adapter via `codex exec --output-last-message`.
 - [x] Show memory-write conflict blocked/warned: `classification=conflict`, `can_remember=false`.
 - [x] Document proof in `docs/codex-live-proof.md`.
+- [x] Add screenshot-friendly Codex proof page in `docs/codex-proof-screenshot.html`.
 - [ ] Ensure quarantined content does not enter `improve()` when live Sentinel flags poisoning.
 
 ### 4. Product Console Upgrade
@@ -155,4 +156,4 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 
 ## Recommended Next Step
 
-Record the exact demo script next, then move to Codex / agent-session integration.
+Next, either rehearse the full demo from `docs/demo-script.md` or build the product console upgrade.

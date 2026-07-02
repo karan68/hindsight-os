@@ -225,3 +225,18 @@ class DemoState(BaseModel):
     embedding_dims: str = ""
     structured_framework: str = ""
     cognee_version: str = ""
+
+
+class OpsPreflightResponse(BaseModel):
+    dataset: str
+    state_seeded: bool
+    state_mode: Literal["demo", "cognee"]
+    memory_count: int
+    cognee_enabled: bool
+    graph_checked: bool = False
+    graph_nodes: int = 0
+    graph_edges: int = 0
+    graph_ready: bool = False
+    status: str
+    recommendation: str
+    ops: list[OpEvent] = []

@@ -46,6 +46,10 @@ This tracker records what is actually implemented and validated. Keep the origin
 - [x] Add separate live chat console.
   - `GET /live-chat`
   - Browser proof: conflict/quarantine warning displayed with `ADR-021`.
+- [x] Add Cognee reliability controls.
+  - `GET /ops/preflight`
+  - `POST /ops/demo-mode`
+  - Demo-mode state now avoids live Cognee even when `.env` contains an LLM key.
 - [x] Update env example and workstream plan.
 
 ## Validation Commands Already Run
@@ -78,6 +82,14 @@ classification: conflict
 primary evidence: ADR-021 Service Source of Truth, INC-51 Double-Charge Postmortem
 ```
 
+Reliability proof:
+
+```text
+POST /ops/demo-mode -> mode=demo, seeded=True, 21 memories
+GET /ops/preflight -> ready_demo
+live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> recall -> classify
+```
+
 ## Known Risks / Gotchas
 
 - Telegram token was pasted in chat. Rotate it after the project/demo.
@@ -91,24 +103,28 @@ primary evidence: ADR-021 Service Source of Truth, INC-51 Double-Charge Postmort
 
 ### 1. Telegram Group Demo
 
-- [ ] Create a Telegram group.
-- [ ] Add `HindSightAIBOT`.
-- [ ] Decide privacy mode:
+- [x] Create a Telegram group.
+- [x] Add `HindSightAIBOT`.
+- [x] Decide privacy mode:
   - Safer demo: use `/hindsight` command in group.
   - Ambient demo: disable privacy mode in BotFather so the bot sees normal group messages.
-- [ ] Run `python -m app.telegram_polling`.
-- [ ] Have two users chat normally.
-- [ ] Send a risky message and confirm Hindsight replies in group.
+- [x] Run `python -m app.telegram_polling`.
+- [x] Send a risky message and confirm Hindsight replies in group.
+- [x] Validate three outcomes in group:
+  - conflict -> warn
+  - instruction override -> quarantine
+  - non-authoritative Redis cache -> allow/confirmation
 - [ ] Record the exact expected demo script.
 
 ### 2. Cognee Reliability Pass
 
+- [x] Add `/ops/preflight` to report state/Cognee graph readiness.
+- [x] Add `/ops/demo-mode` to force deterministic demo mode without touching Cognee data.
+- [x] Ensure demo-mode checks do not call live Cognee even if `LLM_API_KEY` is configured.
 - [ ] Kill duplicate/orphan Python processes before live Cognee work.
-- [ ] Confirm local state and graph are consistent.
-- [ ] Pre-seed once.
-- [ ] Warm recall.
+- [ ] Pre-seed once and warm recall for a live `mode=cognee` demo.
 - [ ] Run one GitHub/Telegram/live-chat conflict in `mode=cognee`.
-- [ ] If graph remains empty or slow, use deterministic fallback for external demo and call out live Cognee limitation honestly.
+- [ ] If graph remains empty or slow, use `/ops/demo-mode` for external demo and call out live Cognee limitation honestly.
 
 ### 3. Codex / Agent Session Integration
 
@@ -135,4 +151,4 @@ primary evidence: ADR-021 Service Source of Truth, INC-51 Double-Charge Postmort
 
 ## Recommended Next Step
 
-Do the Telegram group demo next. It gives the clearest product moment: two people chat, a risky memory claim appears, and Hindsight pops in with an evidence-backed warning.
+Record the exact demo script next, then move to Codex / agent-session integration.

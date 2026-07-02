@@ -10,10 +10,12 @@ from fastapi.responses import FileResponse
 from app.github_integration import GitHubPrCheckRequest, GitHubPrCheckResponse, check_github_pr
 from app.models import AskRequest, DemoState, FeedbackRequest, GraphSnapshot, ProposalRequest
 from app.service import (
+    activate_demo_mode,
     ask_memory,
     check_proposal,
     forget_obsolete,
     graph_snapshot,
+    ops_preflight,
     seed_demo,
     submit_feedback,
     warm_recall,
@@ -60,6 +62,16 @@ async def _warmup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ops/preflight")
+async def preflight():
+    return await ops_preflight()
+
+
+@app.post("/ops/demo-mode", response_model=DemoState)
+def demo_mode():
+    return activate_demo_mode()
 
 
 @app.get("/live-chat")

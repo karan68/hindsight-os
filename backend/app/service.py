@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from app.models import (
     LedgerEntry,
     MemoryItem,
     OpEvent,
+    OpsPreflightResponse,
     ProposalRequest,
     SeedResponse,
     WarningCard,
@@ -254,7 +256,7 @@ async def warm_recall() -> None:
         if _RECALL_WARMED:
             return
         state = load_state()
-        if not state.seeded:
+        if not state.seeded or state.mode != "cognee" or not cognee_client.cognee_enabled():
             return
         query = "service source of truth storage policy spanner cache canary"
         try:
@@ -333,11 +335,20 @@ async def analyze_proposal_text(proposal: str, *, persist_latest: bool = True) -
     if not state.seeded:
         await seed_demo()
         state = load_state()
-    await warm_recall()
 
     started = time.perf_counter()
     ops: list[OpEvent] = []
     catalog = _catalog(state.memories)
+
+    if state.mode != "cognee" or not cognee_client.cognee_enabled():
+        warning = _demo_warning(proposal, state, ops)
+        warning.latency_ms = int((time.perf_counter() - started) * 1000)
+        warning.session_id = f"session-{warning.id}"
+        if persist_latest:
+            update_latest_warning(warning, [op.op for op in ops])
+        return warning
+
+    await warm_recall()
 
     try:
         # 1. REAL vector retrieval (CHUNKS = similarity). Wide candidate set so
@@ -416,6 +427,19 @@ async def ask_memory(question: str) -> AskResponse:
     ops: list[OpEvent] = []
     catalog = _catalog(state.memories)
     mode = "demo"
+
+    if state.mode != "cognee" or not cognee_client.cognee_enabled():
+        record(ops, "recall", {"mode": "demo"}, detail="deterministic keyword evidence")
+        evidence = make_evidence(state.memories, question)
+        answer = _demo_answer(question, evidence)
+        return AskResponse(
+            question=question,
+            answer=answer,
+            evidence=evidence,
+            mode="demo",
+            ops=ops,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+        )
 
     try:
         raw_chunks = await cognee_client.retrieve_chunks(DEFAULT_DATASET, question, ops, top_k=12)
@@ -503,7 +527,7 @@ async def submit_feedback(warning_id: str, useful: bool) -> FeedbackResponse:
         )
     # -------------------------------------------------------------------------
 
-    if warning and warning.id == warning_id and warning.session_id:
+    if warning and warning.id == warning_id and warning.session_id and warning.mode == "cognee":
         try:
             result = await cognee_client.record_feedback_and_improve(
                 DEFAULT_DATASET, warning.session_id, warning.proposal, useful, ops
@@ -618,6 +642,23 @@ async def forget_obsolete(data_id: str) -> ForgetResponse:
     graph_before: dict[str, int] = {}
     graph_after: dict[str, int] = {}
     mode = "demo"
+
+    if state.mode != "cognee" or not cognee_client.cognee_enabled():
+        lifecycle = _lifecycle("forget", "demo:forget", "recall")
+        update_memory_status(data_id, "forgotten", lifecycle)
+        return ForgetResponse(
+            data_id=data_id,
+            removed=[target.label] if target else [],
+            preserved=_preserved_concepts(state.memories, target),
+            recall_after_forget=_forget_summary(before, after, graph_before, graph_after, mode, target),
+            lifecycle=lifecycle,
+            mode="demo",
+            before=before,
+            after=after,
+            graph_before=graph_before,
+            graph_after=graph_after,
+            ops=ops,
+        )
 
     try:
         # Real before/after proof via retrieval (robust path), plus a graph-size
@@ -875,3 +916,119 @@ def _target_content_hashes(target: MemoryItem | None) -> set[str]:
         for node in _GRAPH_CACHE.nodes
         if node.content_hash and sorted(node.node_sets) == target_sets
     }
+
+
+def activate_demo_mode():
+    """Switch app state to deterministic demo mode without touching Cognee data."""
+    global _RECALL_WARMED, _GRAPH_CACHE
+    memories = [memory.model_copy(deep=True) for memory in SEED_MEMORIES]
+    state = replace_memories(memories, "demo", _lifecycle("demo:activate"))
+    _RECALL_WARMED = False
+    _GRAPH_CACHE = None
+    return state
+
+
+async def ops_preflight(*, timeout_s: float = 15.0) -> OpsPreflightResponse:
+    """Non-destructive readiness check for demo/live Cognee paths."""
+    state = load_state()
+    ops: list[OpEvent] = []
+    cognee_on = cognee_client.cognee_enabled()
+
+    if not state.seeded:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=False,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            status="not_seeded",
+            recommendation="Run /seed for live Cognee or /ops/demo-mode for deterministic demo mode.",
+            ops=ops,
+        )
+
+    if state.mode != "cognee" or not cognee_on:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            status="ready_demo",
+            recommendation="Deterministic demo mode is ready. Workstream demos will not call live Cognee.",
+            ops=ops,
+        )
+
+    try:
+        nodes, edges = await asyncio.wait_for(
+            cognee_client.graph_data(ops, DEFAULT_DATASET), timeout=timeout_s
+        )
+    except asyncio.TimeoutError:
+        record(ops, "get_graph_data", {"timeout_s": timeout_s}, status="error", detail="timeout")
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            graph_checked=True,
+            status="cognee_timeout",
+            recommendation="Live Cognee graph check timed out. Use /ops/demo-mode for a smooth external demo, or restart/kill orphan Cognee workers before reseeding.",
+            ops=ops,
+        )
+    except cognee_client.CogneeUnavailable:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=False,
+            status="ready_demo",
+            recommendation="Cognee is unavailable; deterministic demo mode will be used.",
+            ops=ops,
+        )
+    except Exception as exc:
+        record(ops, "get_graph_data", {}, status="error", detail=str(exc))
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            graph_checked=True,
+            status="cognee_error",
+            recommendation="Live Cognee graph check failed. Use /ops/demo-mode for demo or restart cleanly before reseeding.",
+            ops=ops,
+        )
+
+    graph_nodes = len(nodes)
+    graph_edges = len(edges)
+    if graph_nodes > 0:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            graph_checked=True,
+            graph_nodes=graph_nodes,
+            graph_edges=graph_edges,
+            graph_ready=True,
+            status="ready_cognee",
+            recommendation="Live Cognee graph is populated. Run one workstream conflict check before presenting.",
+            ops=ops,
+        )
+
+    return OpsPreflightResponse(
+        dataset=DEFAULT_DATASET,
+        state_seeded=True,
+        state_mode=state.mode,
+        memory_count=len(state.memories),
+        cognee_enabled=cognee_on,
+        graph_checked=True,
+        graph_nodes=graph_nodes,
+        graph_edges=graph_edges,
+        graph_ready=False,
+        status="stale_cognee_empty_graph",
+        recommendation="State says Cognee mode but the graph is empty. Use /ops/demo-mode for external demos, or perform a clean restart and reseed live Cognee.",
+        ops=ops,
+    )

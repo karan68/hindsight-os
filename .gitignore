@@ -8,5 +8,7 @@ backend/.cognee_system/
 backend/.cognee_data/
 backend/app_state.json
 backend/workstream_events.json
+backend/codex_live_*.txt
+backend/codex_live_*.jsonl
 frontend/node_modules/
 frontend/dist/

@@ -129,9 +129,24 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 ### 3. Codex / Agent Session Integration
 
 - [x] Verify local Codex CLI exists (`codex.ps1`). No stable transcript export/API was proven.
+- [x] Inspect Codex plugin/hook surface.
+  - `codex features` reports `hooks` and `plugins` as stable.
+  - `plugin_hooks` is `removed`, so hooks must be installed as native config, not inside a plugin.
+  - Native hook events verified in the Codex binary: `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`, and more.
+- [x] Prove native in-session interception (see `docs/codex-hook-proof.md`).
+  - Hook script `hooks/hindsight_codex_hook.py` + installer `scripts/install-codex-hook.ps1`.
+  - `additionalContext` injection flips Codex from accepting a poisoning claim to rejecting it, citing `ADR-021` + `INC-51`.
+  - `permissionDecision: deny` hard-blocks a tool call (`Command blocked by PreToolUse hook`).
+  - Honest caveat: hooks need trust (interactive TUI approval, or `--dangerously-bypass-hook-trust` for vetted automation); backend must be running; hook fails open.
 - [x] Add manual/wrapper transcript adapter:
   - `POST /integrations/codex/session/check`
   - `python -m app.codex_session --file transcript.txt`
+- [x] Add Codex sidecar command:
+  - `python -m app.hindsight_codex "<message>"`
+  - Runs `codex exec --output-last-message`, checks the actual Codex final message, and prints Hindsight outcome/evidence.
+- [x] Add optional Telegram alert for Codex warnings/quarantines.
+  - CLI flags: `--notify-telegram`, `--telegram-chat-id`.
+  - Env flags: `HINDSIGHT_CODEX_NOTIFY_TELEGRAM`, `HINDSIGHT_TELEGRAM_NOTIFY_CHAT_ID`.
 - [x] Send one real Codex CLI transcript into the adapter via `codex exec --output-last-message`.
 - [x] Show memory-write conflict blocked/warned: `classification=conflict`, `can_remember=false`.
 - [x] Document proof in `docs/codex-live-proof.md`.
@@ -154,6 +169,36 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 - [ ] Handle retries/idempotency.
 - [ ] Add safe PR proof so non-risky PRs stay quiet.
 
+## Status Summary (2026-07-02)
+
+### Done and validated
+
+- Workstream event pipeline with tiered screening (`/events/ingest`, `/events`).
+- GitHub PR check wrapper + conflict proof on PR #2.
+- Telegram bot + group demo (conflict -> warn, override -> quarantine, cache -> allow).
+- Telegram alert for flagged Codex output (`--notify-telegram`).
+- Live chat console (`/live-chat`).
+- Local simulator (5/5 pass).
+- Cognee reliability controls (`/ops/preflight`, `/ops/demo-mode`).
+- Codex transcript adapter (`/integrations/codex/session/check`, `app.codex_session`).
+- Codex sidecar (`app.hindsight_codex`) that runs Codex and checks its output.
+- **Native Codex hook interception, proven end-to-end** (`docs/codex-hook-proof.md`):
+  hook fires in-session, injects Hindsight's verdict via `additionalContext`
+  (flips accept -> reject), and can `deny` a tool call. Installer:
+  `scripts/install-codex-hook.ps1`.
+
+### Left to do
+
+- [ ] Live Cognee (`mode=cognee`) demo pass: pre-seed + warm, run one conflict live,
+      confirm the native hook `deny` path fires on a real Sentinel quarantine verdict
+      (deterministic demo mode caps at `warned`, so hard-deny is only reachable live).
+- [ ] Establish persistent hook trust (interactive TUI once) so the demo does not
+      need `--dangerously-bypass-hook-trust`.
+- [ ] Ensure quarantined content never enters `improve()` when live Sentinel flags poisoning.
+- [ ] Product console upgrade: unified event dashboard with source filters + evidence drawer.
+- [ ] GitHub productionization: replace local `gh` wrapper with a GitHub App/webhook path.
+
 ## Recommended Next Step
 
-Next, either rehearse the full demo from `docs/demo-script.md` or build the product console upgrade.
+Rehearse the full demo from `docs/demo-script.md`, then do the live-Cognee pass so
+the native hook `deny` path is shown against a real Sentinel quarantine verdict.

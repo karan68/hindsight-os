@@ -26,6 +26,8 @@ def main() -> None:
     parser.add_argument("--actor", default="codex-agent")
     parser.add_argument("--source-label", default="manual-transcript")
     parser.add_argument("--event-type", default="transcript", choices=["agent_message", "agent_memory_write", "transcript"])
+    parser.add_argument("--notify-telegram", action="store_true", help="Send a Telegram alert when Hindsight blocks/warns")
+    parser.add_argument("--telegram-chat-id", help="Telegram chat id for alert override")
     parser.add_argument("--json", action="store_true", help="Print full JSON response")
     args = parser.parse_args()
 
@@ -39,6 +41,8 @@ def main() -> None:
                 actor=args.actor,
                 source_label=args.source_label,
                 event_type=args.event_type,
+                notify_telegram=args.notify_telegram,
+                telegram_chat_id=args.telegram_chat_id,
             )
         )
     )
@@ -56,6 +60,7 @@ def main() -> None:
         "primary_evidence": record.primary_evidence_labels,
         "can_remember": response.can_remember,
         "blocked": response.blocked,
+        "notification": response.notification.model_dump() if response.notification else None,
     }, indent=2))
 
 

@@ -26,7 +26,11 @@ import urllib.request
 
 API_BASE = os.getenv("HINDSIGHT_API", "http://127.0.0.1:8000").rstrip("/")
 CHECK_URL = f"{API_BASE}/integrations/codex/session/check"
-TIMEOUT_SECONDS = 6.0
+# Live cognee mode runs real recall + graph + LLM classify (~15s); the demo path
+# is sub-second. Keep this comfortably above the live latency so the hook does not
+# time out and fail open on a real Sentinel quarantine verdict. Benign commands
+# never reach here (the local RELEVANCE gate short-circuits them with no backend call).
+TIMEOUT_SECONDS = float(os.getenv("HINDSIGHT_HOOK_TIMEOUT", "30"))
 
 # Cheap local screen: only escalate to Hindsight when the text looks like a
 # decision / memory-write / authority claim. Keeps benign commands zero-latency.

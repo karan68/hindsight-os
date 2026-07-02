@@ -189,16 +189,54 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 
 ### Left to do
 
-- [ ] Live Cognee (`mode=cognee`) demo pass: pre-seed + warm, run one conflict live,
-      confirm the native hook `deny` path fires on a real Sentinel quarantine verdict
-      (deterministic demo mode caps at `warned`, so hard-deny is only reachable live).
-- [ ] Establish persistent hook trust (interactive TUI once) so the demo does not
-      need `--dangerously-bypass-hook-trust`.
-- [ ] Ensure quarantined content never enters `improve()` when live Sentinel flags poisoning.
+- [x] Live Cognee (`mode=cognee`) demo pass: pre-seed + warm, run one conflict live
+      (see "Live Cognee pass" below). A real Sentinel quarantine verdict
+      (`is_poisoning=true`, `recommended_control=quarantine`) is now produced live;
+      wiring the native Codex hook `deny` against that live verdict is still open.
+- [x] Ensure quarantined content never enters `improve()` when live Sentinel flags
+      poisoning — verified: poisoning feedback returns `improve_status=blocked_quarantined`,
+      `blocked=true`, and Cognee `improve` is skipped.
+- [x] Fire the native Codex hook `deny` path against the live Sentinel quarantine verdict
+      — verified in-session on Codex v0.142.4 (`PreToolUse Blocked`, reason cites ADR-021 +
+      INC-51). See docs/codex-hook-proof.md “Live deny proof (cognee mode)”. Required raising
+      the hook timeout 6s→30s (env `HINDSIGHT_HOOK_TIMEOUT`) so it does not fail open on
+      live-cognee latency.
+- [x] Establish persistent hook trust — done via a one-time interactive TUI
+      (`codex --profile hindsight`, approve the hook). Three `trusted_hash` entries are
+      persisted in `~/.codex/hindsight.config.toml`; `codex exec --profile hindsight` now
+      fires the hooks WITHOUT `--dangerously-bypass-hook-trust` (verified: `hook:` lines
+      appear and Codex refuses the poisoning command citing the memory-poisoning verdict).
+- [x] Harden live-Cognee classify against Azure content-filter retry-storms. A poisoning
+      proposal trips the Azure content filter; Cognee retried it with 8/16/32/64/128s backoff,
+      so the endpoint overran the hook timeout and failed open (no deny). Fix: bound the
+      classify with a hard deadline (`asyncio.wait`, env `HINDSIGHT_CLASSIFY_TIMEOUT`=15s —
+      `asyncio.wait_for` was ineffective because it awaits the uncancellable retry loop) and
+      fall back to a DETERMINISTIC Sentinel verdict over the REAL recalled evidence
+      (quarantine only when manipulation language is present). Result: poisoning now returns
+      `blocked/quarantined` in ~15s (was ~5 min → fail open); safe proposals still `allow`.
 - [ ] Product console upgrade: unified event dashboard with source filters + evidence drawer.
 - [ ] GitHub productionization: replace local `gh` wrapper with a GitHub App/webhook path.
 
+### Live Cognee pass (verified 2026-07-02)
+
+Real `mode=cognee`, Azure gpt-5.4 + local Ollama `nomic-embed-text`, cognee 1.2.2.
+One clean uvicorn process; orphan Python killed first (dlt/kuzu lock hygiene).
+
+```text
+seed        mode=cognee items=21 secs=794 (real cognify, forget-all then remember x21)
+conflict    mode=cognee class=conflict conf=0.97 control=warn
+            cited ADR-021 Service Source of Truth + INC-51 Double-Charge Postmortem
+            ops recall(CHUNKS) -> recall(GRAPH_COMPLETION, 9 facts) -> classify
+safe        mode=cognee class=confirmation control=allow poison=false (no false positive)
+poison      mode=cognee class=conflict tactic=instruction_override risk=0.99
+            is_poisoning=true control=quarantine
+            threat OWASP LLM04 + OWASP LLM01 + MITRE ATLAS AML.T0070
+sentinel    poisoning feedback -> improve_status=blocked_quarantined blocked=true (improve skipped)
+graph       mode=cognee nodes=250 edges=1324 (live knowledge-graph read)
+```
+
 ## Recommended Next Step
 
-Rehearse the full demo from `docs/demo-script.md`, then do the live-Cognee pass so
-the native hook `deny` path is shown against a real Sentinel quarantine verdict.
+Live Cognee, persistent hook trust, and the content-filter-resilient deny are all done
+and verified. Next: rehearse the full demo from `docs/demo-script.md` end-to-end in
+`mode=cognee`, then (optional polish) the product console upgrade and GitHub App path.

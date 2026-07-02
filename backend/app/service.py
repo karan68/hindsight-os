@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime, timezone
 
 from app import cognee_client
-from app.classifier import classify_proposal, make_evidence
+from app.classifier import classify_proposal, detect_manipulation, make_evidence
 from app.models import (
     AskResponse,
+    Classification,
     ClassifierVerdict,
     EvidenceItem,
     FeedbackResponse,
@@ -22,6 +23,7 @@ from app.models import (
     OpsPreflightResponse,
     ProposalRequest,
     SeedResponse,
+    ThreatTactic,
     WarningCard,
 )
 from app.seed_data import SEED_MEMORIES
@@ -215,6 +217,53 @@ def _demo_warning(proposal: str, state, ops: list[OpEvent]) -> WarningCard:
     return warning
 
 
+def _sentinel_refused_verdict(
+    proposal: str, evidence: list[EvidenceItem], refused
+) -> ClassifierVerdict:
+    """Deterministic Sentinel verdict for when the live LLM classifier is refused or
+    times out (typically an upstream content-policy retry-storm on adversarial text).
+
+    Grounded in the REAL recalled evidence. Conservative: only escalates to a
+    poisoning/quarantine verdict when explicit manipulation language (instruction
+    override / authority spoof) is present, so a legitimate proposal that merely times
+    out is surfaced for human review, not quarantined."""
+    tactic, risk = detect_manipulation(proposal)
+    trusted = [ev.label for ev in evidence if ev.status not in ("obsolete", "forgotten")]
+    cited = (trusted or [ev.label for ev in evidence])[:3]
+    why = "content-policy refusal" if refused.content_policy else "classifier timeout"
+
+    if tactic != "none":
+        return ClassifierVerdict(
+            classification=Classification.conflict,
+            confidence=0.85,
+            summary=(
+                f"Deterministic Sentinel verdict ({why}): this proposal uses "
+                f"{tactic.replace('_', ' ')} language to overturn trusted memory "
+                f"({', '.join(cited) or 'prior decisions'}). Quarantined as a suspected "
+                "memory-poisoning attempt; recall was real, only the LLM verdict was unavailable."
+            ),
+            conflicting_memories=cited,
+            recommended_action="ask_human",
+            limits="Deterministic fallback verdict (LLM classifier unavailable); grounded in real Cognee recall.",
+            manipulation_risk=max(risk, 0.9),
+            manipulation_tactic=ThreatTactic(tactic),
+            is_poisoning=True,
+            threat_rationale=f"Detected {tactic.replace('_', ' ')} language targeting trusted records.",
+        )
+
+    return ClassifierVerdict(
+        classification=Classification.conflict if cited else Classification.insufficient_evidence,
+        confidence=0.5,
+        summary=(
+            f"The live classifier was unavailable ({why}); Hindsight surfaces the retrieved "
+            "trusted memory for human review rather than auto-approving."
+        ),
+        conflicting_memories=cited,
+        recommended_action="ask_human",
+        limits="Deterministic fallback verdict (LLM classifier unavailable); grounded in real Cognee recall.",
+    )
+
+
 async def seed_demo() -> SeedResponse:
     memories = [memory.model_copy(deep=True) for memory in SEED_MEMORIES]
     mode = "demo"
@@ -350,6 +399,14 @@ async def analyze_proposal_text(proposal: str, *, persist_latest: bool = True) -
 
     await warm_recall()
 
+    # Pre-initialized so the ClassifyRefused handler can build a grounded verdict from
+    # whatever recall produced before the classifier was refused/timed out.
+    evidence = []
+    raw_context = ""
+    graph_context = ""
+    reasoning_path = []
+    graph_nodes = []
+
     try:
         # 1. REAL vector retrieval (CHUNKS = similarity). Wide candidate set so
         #    canonical memories survive the session-artifact filter.
@@ -386,6 +443,23 @@ async def analyze_proposal_text(proposal: str, *, persist_latest: bool = True) -
         warning = _verdict_to_warning(proposal, verdict, evidence, raw_context, ops)
 
         # 4. Attach the reasoning path + the vector-vs-graph comparison.
+        _attach_retrieval(
+            warning, evidence, graph_context, reasoning_path, graph_nodes, state.memories
+        )
+    except cognee_client.ClassifyRefused as refused:
+        # The live classifier was refused/timed out (typically an upstream content-policy
+        # retry-storm on adversarial text). Fall back to a DETERMINISTIC Sentinel verdict
+        # over the REAL recalled evidence so a poisoning attempt is still quarantined
+        # instead of being silently downgraded to a soft warning (or failing a hook open).
+        record(
+            ops,
+            "sentinel.deterministic",
+            {"content_policy": refused.content_policy},
+            status="error",
+            detail=refused.reason,
+        )
+        verdict = _sentinel_refused_verdict(proposal, evidence, refused)
+        warning = _verdict_to_warning(proposal, verdict, evidence, raw_context, ops)
         _attach_retrieval(
             warning, evidence, graph_context, reasoning_path, graph_nodes, state.memories
         )

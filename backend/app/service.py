@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
 
 from app import cognee_client
-from app.classifier import classify_proposal, make_evidence
+from app.classifier import classify_proposal, detect_manipulation, make_evidence
 from app.models import (
     AskResponse,
+    Classification,
     ClassifierVerdict,
     EvidenceItem,
     FeedbackResponse,
@@ -18,8 +20,10 @@ from app.models import (
     LedgerEntry,
     MemoryItem,
     OpEvent,
+    OpsPreflightResponse,
     ProposalRequest,
     SeedResponse,
+    ThreatTactic,
     WarningCard,
 )
 from app.seed_data import SEED_MEMORIES
@@ -204,11 +208,60 @@ def _demo_warning(proposal: str, state, ops: list[OpEvent]) -> WarningCard:
     evidence = make_evidence(state.memories, proposal)
     record(ops, "classify", {"mode": "demo"}, detail="deterministic keyword classifier")
     warning = classify_proposal(proposal, evidence)
+    value = getattr(warning.classification, "value", warning.classification)
+    warning.recommended_control = _recommended_control(str(value), False)  # type: ignore[assignment]
     warning.mode = "demo"
     warning.reasoning = warning.summary
     warning.raw_context = "\n\n".join(f"[{ev.label}] {ev.snippet}" for ev in evidence)
     warning.ops = ops
     return warning
+
+
+def _sentinel_refused_verdict(
+    proposal: str, evidence: list[EvidenceItem], refused
+) -> ClassifierVerdict:
+    """Deterministic Sentinel verdict for when the live LLM classifier is refused or
+    times out (typically an upstream content-policy retry-storm on adversarial text).
+
+    Grounded in the REAL recalled evidence. Conservative: only escalates to a
+    poisoning/quarantine verdict when explicit manipulation language (instruction
+    override / authority spoof) is present, so a legitimate proposal that merely times
+    out is surfaced for human review, not quarantined."""
+    tactic, risk = detect_manipulation(proposal)
+    trusted = [ev.label for ev in evidence if ev.status not in ("obsolete", "forgotten")]
+    cited = (trusted or [ev.label for ev in evidence])[:3]
+    why = "content-policy refusal" if refused.content_policy else "classifier timeout"
+
+    if tactic != "none":
+        return ClassifierVerdict(
+            classification=Classification.conflict,
+            confidence=0.85,
+            summary=(
+                f"Deterministic Sentinel verdict ({why}): this proposal uses "
+                f"{tactic.replace('_', ' ')} language to overturn trusted memory "
+                f"({', '.join(cited) or 'prior decisions'}). Quarantined as a suspected "
+                "memory-poisoning attempt; recall was real, only the LLM verdict was unavailable."
+            ),
+            conflicting_memories=cited,
+            recommended_action="ask_human",
+            limits="Deterministic fallback verdict (LLM classifier unavailable); grounded in real Cognee recall.",
+            manipulation_risk=max(risk, 0.9),
+            manipulation_tactic=ThreatTactic(tactic),
+            is_poisoning=True,
+            threat_rationale=f"Detected {tactic.replace('_', ' ')} language targeting trusted records.",
+        )
+
+    return ClassifierVerdict(
+        classification=Classification.conflict if cited else Classification.insufficient_evidence,
+        confidence=0.5,
+        summary=(
+            f"The live classifier was unavailable ({why}); Hindsight surfaces the retrieved "
+            "trusted memory for human review rather than auto-approving."
+        ),
+        conflicting_memories=cited,
+        recommended_action="ask_human",
+        limits="Deterministic fallback verdict (LLM classifier unavailable); grounded in real Cognee recall.",
+    )
 
 
 async def seed_demo() -> SeedResponse:
@@ -252,7 +305,7 @@ async def warm_recall() -> None:
         if _RECALL_WARMED:
             return
         state = load_state()
-        if not state.seeded:
+        if not state.seeded or state.mode != "cognee" or not cognee_client.cognee_enabled():
             return
         query = "service source of truth storage policy spanner cache canary"
         try:
@@ -326,21 +379,38 @@ def _attach_retrieval(
         )
 
 
-async def check_proposal(request: ProposalRequest):
+async def analyze_proposal_text(proposal: str, *, persist_latest: bool = True) -> WarningCard:
     state = load_state()
     if not state.seeded:
         await seed_demo()
         state = load_state()
-    await warm_recall()
 
     started = time.perf_counter()
     ops: list[OpEvent] = []
     catalog = _catalog(state.memories)
 
+    if state.mode != "cognee" or not cognee_client.cognee_enabled():
+        warning = _demo_warning(proposal, state, ops)
+        warning.latency_ms = int((time.perf_counter() - started) * 1000)
+        warning.session_id = f"session-{warning.id}"
+        if persist_latest:
+            update_latest_warning(warning, [op.op for op in ops])
+        return warning
+
+    await warm_recall()
+
+    # Pre-initialized so the ClassifyRefused handler can build a grounded verdict from
+    # whatever recall produced before the classifier was refused/timed out.
+    evidence = []
+    raw_context = ""
+    graph_context = ""
+    reasoning_path = []
+    graph_nodes = []
+
     try:
         # 1. REAL vector retrieval (CHUNKS = similarity). Wide candidate set so
         #    canonical memories survive the session-artifact filter.
-        raw_chunks = await cognee_client.retrieve_chunks(DEFAULT_DATASET, request.proposal, ops, top_k=12)
+        raw_chunks = await cognee_client.retrieve_chunks(DEFAULT_DATASET, proposal, ops, top_k=12)
         evidence, context_blocks, raw_context = _chunks_to_evidence(raw_chunks, catalog)
 
         # 2. REAL graph-native retrieval (GRAPH_COMPLETION, relationship facts).
@@ -351,7 +421,7 @@ async def check_proposal(request: ProposalRequest):
         graph_nodes: list[str] = []
         try:
             graph = await cognee_client.retrieve_graph_context(
-                DEFAULT_DATASET, request.proposal, ops, depth=2, top_k=6
+                DEFAULT_DATASET, proposal, ops, depth=2, top_k=6
             )
             graph_context = graph.get("context", "")
             reasoning_path = graph.get("facts", [])
@@ -369,24 +439,46 @@ async def check_proposal(request: ProposalRequest):
                 "GRAPH REASONING (multi-hop facts Cognee traversed from the knowledge graph):\n"
                 + "\n".join(f"- {fact}" for fact in reasoning_path[:12])
             )
-        verdict = await cognee_client.classify_with_llm(request.proposal, combined_blocks, ops)
-        warning = _verdict_to_warning(request.proposal, verdict, evidence, raw_context, ops)
+        verdict = await cognee_client.classify_with_llm(proposal, combined_blocks, ops)
+        warning = _verdict_to_warning(proposal, verdict, evidence, raw_context, ops)
 
         # 4. Attach the reasoning path + the vector-vs-graph comparison.
         _attach_retrieval(
             warning, evidence, graph_context, reasoning_path, graph_nodes, state.memories
         )
+    except cognee_client.ClassifyRefused as refused:
+        # The live classifier was refused/timed out (typically an upstream content-policy
+        # retry-storm on adversarial text). Fall back to a DETERMINISTIC Sentinel verdict
+        # over the REAL recalled evidence so a poisoning attempt is still quarantined
+        # instead of being silently downgraded to a soft warning (or failing a hook open).
+        record(
+            ops,
+            "sentinel.deterministic",
+            {"content_policy": refused.content_policy},
+            status="error",
+            detail=refused.reason,
+        )
+        verdict = _sentinel_refused_verdict(proposal, evidence, refused)
+        warning = _verdict_to_warning(proposal, verdict, evidence, raw_context, ops)
+        _attach_retrieval(
+            warning, evidence, graph_context, reasoning_path, graph_nodes, state.memories
+        )
     except cognee_client.CogneeUnavailable:
-        warning = _demo_warning(request.proposal, state, ops)
+        warning = _demo_warning(proposal, state, ops)
     except Exception as exc:  # Cognee/LLM error -> deterministic fallback, but show the error
         print(f"[check] Cognee path failed, using deterministic fallback: {exc}")
         record(ops, "fallback", {"reason": type(exc).__name__}, status="error", detail=str(exc))
-        warning = _demo_warning(request.proposal, state, ops)
+        warning = _demo_warning(proposal, state, ops)
 
     warning.latency_ms = int((time.perf_counter() - started) * 1000)
     warning.session_id = f"session-{warning.id}"
-    update_latest_warning(warning, [op.op for op in ops])
+    if persist_latest:
+        update_latest_warning(warning, [op.op for op in ops])
     return warning
+
+
+async def check_proposal(request: ProposalRequest):
+    return await analyze_proposal_text(request.proposal, persist_latest=True)
 
 
 def _demo_answer(question: str, evidence: list[EvidenceItem]) -> str:
@@ -409,6 +501,19 @@ async def ask_memory(question: str) -> AskResponse:
     ops: list[OpEvent] = []
     catalog = _catalog(state.memories)
     mode = "demo"
+
+    if state.mode != "cognee" or not cognee_client.cognee_enabled():
+        record(ops, "recall", {"mode": "demo"}, detail="deterministic keyword evidence")
+        evidence = make_evidence(state.memories, question)
+        answer = _demo_answer(question, evidence)
+        return AskResponse(
+            question=question,
+            answer=answer,
+            evidence=evidence,
+            mode="demo",
+            ops=ops,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+        )
 
     try:
         raw_chunks = await cognee_client.retrieve_chunks(DEFAULT_DATASET, question, ops, top_k=12)
@@ -496,7 +601,7 @@ async def submit_feedback(warning_id: str, useful: bool) -> FeedbackResponse:
         )
     # -------------------------------------------------------------------------
 
-    if warning and warning.id == warning_id and warning.session_id:
+    if warning and warning.id == warning_id and warning.session_id and warning.mode == "cognee":
         try:
             result = await cognee_client.record_feedback_and_improve(
                 DEFAULT_DATASET, warning.session_id, warning.proposal, useful, ops
@@ -611,6 +716,23 @@ async def forget_obsolete(data_id: str) -> ForgetResponse:
     graph_before: dict[str, int] = {}
     graph_after: dict[str, int] = {}
     mode = "demo"
+
+    if state.mode != "cognee" or not cognee_client.cognee_enabled():
+        lifecycle = _lifecycle("forget", "demo:forget", "recall")
+        update_memory_status(data_id, "forgotten", lifecycle)
+        return ForgetResponse(
+            data_id=data_id,
+            removed=[target.label] if target else [],
+            preserved=_preserved_concepts(state.memories, target),
+            recall_after_forget=_forget_summary(before, after, graph_before, graph_after, mode, target),
+            lifecycle=lifecycle,
+            mode="demo",
+            before=before,
+            after=after,
+            graph_before=graph_before,
+            graph_after=graph_after,
+            ops=ops,
+        )
 
     try:
         # Real before/after proof via retrieval (robust path), plus a graph-size
@@ -868,3 +990,119 @@ def _target_content_hashes(target: MemoryItem | None) -> set[str]:
         for node in _GRAPH_CACHE.nodes
         if node.content_hash and sorted(node.node_sets) == target_sets
     }
+
+
+def activate_demo_mode():
+    """Switch app state to deterministic demo mode without touching Cognee data."""
+    global _RECALL_WARMED, _GRAPH_CACHE
+    memories = [memory.model_copy(deep=True) for memory in SEED_MEMORIES]
+    state = replace_memories(memories, "demo", _lifecycle("demo:activate"))
+    _RECALL_WARMED = False
+    _GRAPH_CACHE = None
+    return state
+
+
+async def ops_preflight(*, timeout_s: float = 15.0) -> OpsPreflightResponse:
+    """Non-destructive readiness check for demo/live Cognee paths."""
+    state = load_state()
+    ops: list[OpEvent] = []
+    cognee_on = cognee_client.cognee_enabled()
+
+    if not state.seeded:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=False,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            status="not_seeded",
+            recommendation="Run /seed for live Cognee or /ops/demo-mode for deterministic demo mode.",
+            ops=ops,
+        )
+
+    if state.mode != "cognee" or not cognee_on:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            status="ready_demo",
+            recommendation="Deterministic demo mode is ready. Workstream demos will not call live Cognee.",
+            ops=ops,
+        )
+
+    try:
+        nodes, edges = await asyncio.wait_for(
+            cognee_client.graph_data(ops, DEFAULT_DATASET), timeout=timeout_s
+        )
+    except asyncio.TimeoutError:
+        record(ops, "get_graph_data", {"timeout_s": timeout_s}, status="error", detail="timeout")
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            graph_checked=True,
+            status="cognee_timeout",
+            recommendation="Live Cognee graph check timed out. Use /ops/demo-mode for a smooth external demo, or restart/kill orphan Cognee workers before reseeding.",
+            ops=ops,
+        )
+    except cognee_client.CogneeUnavailable:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=False,
+            status="ready_demo",
+            recommendation="Cognee is unavailable; deterministic demo mode will be used.",
+            ops=ops,
+        )
+    except Exception as exc:
+        record(ops, "get_graph_data", {}, status="error", detail=str(exc))
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            graph_checked=True,
+            status="cognee_error",
+            recommendation="Live Cognee graph check failed. Use /ops/demo-mode for demo or restart cleanly before reseeding.",
+            ops=ops,
+        )
+
+    graph_nodes = len(nodes)
+    graph_edges = len(edges)
+    if graph_nodes > 0:
+        return OpsPreflightResponse(
+            dataset=DEFAULT_DATASET,
+            state_seeded=True,
+            state_mode=state.mode,
+            memory_count=len(state.memories),
+            cognee_enabled=cognee_on,
+            graph_checked=True,
+            graph_nodes=graph_nodes,
+            graph_edges=graph_edges,
+            graph_ready=True,
+            status="ready_cognee",
+            recommendation="Live Cognee graph is populated. Run one workstream conflict check before presenting.",
+            ops=ops,
+        )
+
+    return OpsPreflightResponse(
+        dataset=DEFAULT_DATASET,
+        state_seeded=True,
+        state_mode=state.mode,
+        memory_count=len(state.memories),
+        cognee_enabled=cognee_on,
+        graph_checked=True,
+        graph_nodes=graph_nodes,
+        graph_edges=graph_edges,
+        graph_ready=False,
+        status="stale_cognee_empty_graph",
+        recommendation="State says Cognee mode but the graph is empty. Use /ops/demo-mode for external demos, or perform a clean restart and reseed live Cognee.",
+        ops=ops,
+    )

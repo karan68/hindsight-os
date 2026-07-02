@@ -1,0 +1,13 @@
+{
+  "session_id": "codex-live-terminal-proof",
+  "event_id": "codex-codex-live-terminal-proof-044e4286b3c1",
+  "outcome": "warned",
+  "classification": "conflict",
+  "recommended_control": "warn",
+  "primary_evidence": [
+    "ADR-021 Service Source of Truth",
+    "INC-51 Double-Charge Postmortem"
+  ],
+  "can_remember": false,
+  "blocked": false
+}

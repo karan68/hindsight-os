@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -29,6 +30,38 @@ class CogneeUnavailable(RuntimeError):
 
 def cognee_enabled() -> bool:
     return bool(os.getenv("LLM_API_KEY"))
+
+
+# Bound the structured classifier so an upstream content-policy refusal (which Cognee
+# retries with escalating 8/16/32/64/128s backoff) cannot stall the request past a
+# downstream deadline (e.g. the Codex hook timeout, which would otherwise fail open and
+# skip a deny). A normal live classify returns in ~10s.
+CLASSIFY_TIMEOUT_SECONDS = float(os.getenv("HINDSIGHT_CLASSIFY_TIMEOUT", "15"))
+
+_CONTENT_POLICY_MARKERS = (
+    "content policy",
+    "contentpolicyfilter",
+    "not aligned with our content policy",
+    "content_filter",
+    "content management policy",
+    "responsible ai",
+)
+
+
+def _is_content_policy_error(exc: BaseException) -> bool:
+    blob = f"{type(exc).__name__} {exc}".lower()
+    return any(marker in blob for marker in _CONTENT_POLICY_MARKERS)
+
+
+class ClassifyRefused(RuntimeError):
+    """The structured classifier could not return a verdict in time (content-policy
+    refusal or timeout). Callers fall back to a deterministic Sentinel verdict over the
+    already-recalled evidence instead of hanging or failing a downstream hook open."""
+
+    def __init__(self, reason: str, *, content_policy: bool = False) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.content_policy = content_policy
 
 
 # --- Conflict classifier prompt (app-level reasoning over Cognee-retrieved evidence) ---
@@ -318,7 +351,7 @@ async def classify_with_llm(
     context = "\n\n".join(context_blocks) if context_blocks else "(no prior memory retrieved)"
     text_input = CLASSIFIER_TEMPLATE.format(proposal=proposal, context=context)
 
-    verdict = await timed(
+    call = timed(
         ops,
         "classify",
         {"model": os.getenv("LLM_MODEL", ""), "framework": "structured_output"},
@@ -333,7 +366,36 @@ async def classify_with_llm(
         ),
         raw=lambda v: v.model_dump_json(indent=2),
     )
-    return verdict
+    # NOTE: asyncio.wait_for is NOT used here on purpose. Cognee retries a
+    # content-policy refusal with escalating backoff, and wait_for *awaits* the
+    # cancellation of the inner task — which does not return promptly — so the
+    # deadline is ineffective. asyncio.wait returns after the timeout regardless,
+    # letting us abandon the (best-effort cancelled) retry storm and fall back.
+    task = asyncio.ensure_future(call)
+    done, _pending = await asyncio.wait({task}, timeout=CLASSIFY_TIMEOUT_SECONDS)
+    if task not in done:
+        task.cancel()  # best-effort; stops at the next backoff await
+        record(
+            ops,
+            "classify",
+            {"model": os.getenv("LLM_MODEL", "")},
+            status="error",
+            detail=f"classifier exceeded {CLASSIFY_TIMEOUT_SECONDS:.0f}s (upstream retries)",
+        )
+        raise ClassifyRefused(
+            f"classifier exceeded {CLASSIFY_TIMEOUT_SECONDS:.0f}s "
+            "(likely upstream content-policy retries)",
+            content_policy=False,
+        )
+    try:
+        return task.result()
+    except Exception as exc:
+        if _is_content_policy_error(exc):
+            raise ClassifyRefused(
+                "model safety filter refused the content (content-policy)",
+                content_policy=True,
+            ) from exc
+        raise
 
 
 async def answer_with_llm(question: str, context_blocks: list[str], ops: list[OpEvent]) -> str:

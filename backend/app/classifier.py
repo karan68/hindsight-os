@@ -130,3 +130,51 @@ def make_evidence(memories: list, proposal: str) -> list[EvidenceItem]:
         )
         for _, memory in scored[:4]
     ]
+
+
+_MANIPULATION_TACTICS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "instruction_override",
+        (
+            "ignore adr",
+            "ignore the adr",
+            "ignore prior",
+            "ignore previous",
+            "ignore the prior",
+            "ignore the previous",
+            "disregard",
+            "overwrite the",
+            "overwrite memory",
+            "overwrite the decision",
+            "rescind",
+            "override the",
+            "overrule",
+        ),
+    ),
+    (
+        "authority_spoof",
+        (
+            "approved by",
+            "signed off",
+            "sign-off by",
+            "already approved",
+            "was approved by",
+            "leadership approved",
+            "exec approved",
+        ),
+    ),
+)
+
+
+def detect_manipulation(proposal: str) -> tuple[str, float]:
+    """Deterministic manipulation-tactic detector used when the LLM Sentinel classifier
+    is unavailable (content-policy refusal or timeout).
+
+    Conservative by design: returns ("none", 0.0) unless explicit instruction-override or
+    authority-spoof language is present, so a legitimate proposal is never quarantined by
+    this fallback."""
+    lowered = (proposal or "").lower()
+    for tactic, keywords in _MANIPULATION_TACTICS:
+        if any(keyword in lowered for keyword in keywords):
+            return tactic, 0.9
+    return "none", 0.0

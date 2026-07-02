@@ -7,5 +7,9 @@ __pycache__/
 backend/.cognee_system/
 backend/.cognee_data/
 backend/app_state.json
+backend/workstream_events.json
+backend/codex_live_*.txt
+backend/codex_live_*.jsonl
+backend/hindsight_codex_hook_probe.jsonl
 frontend/node_modules/
 frontend/dist/

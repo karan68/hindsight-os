@@ -146,6 +146,13 @@ The console should show:
 
 Warnings stay in GitHub, Telegram, and Codex. Governance and audit live in the console.
 
+Current local surface:
+
+- `GET /live-chat`
+- Standalone backend-served chat console; does not modify the `localhost:5173` backup UI.
+- Sends chat messages as `live_chat` workstream events.
+- Pops a warning panel/toast only when `/events/ingest` returns a warning or quarantine outcome.
+
 ## Phase 7: Rehearsal Gate
 
 Run the full script twice:

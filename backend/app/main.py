@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.github_integration import GitHubPrCheckRequest, GitHubPrCheckResponse, check_github_pr
 from app.models import AskRequest, DemoState, FeedbackRequest, GraphSnapshot, ProposalRequest
@@ -57,6 +60,12 @@ async def _warmup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/live-chat")
+@app.get("/live-chat/")
+def live_chat_console():
+    return FileResponse(Path(__file__).resolve().parent / "static" / "live_chat.html")
 
 
 @app.post("/seed")

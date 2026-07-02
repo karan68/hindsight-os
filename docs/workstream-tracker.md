@@ -121,10 +121,11 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 - [x] Add `/ops/preflight` to report state/Cognee graph readiness.
 - [x] Add `/ops/demo-mode` to force deterministic demo mode without touching Cognee data.
 - [x] Ensure demo-mode checks do not call live Cognee even if `LLM_API_KEY` is configured.
-- [ ] Kill duplicate/orphan Python processes before live Cognee work.
-- [ ] Pre-seed once and warm recall for a live `mode=cognee` demo.
-- [ ] Run one GitHub/Telegram/live-chat conflict in `mode=cognee`.
-- [ ] If graph remains empty or slow, use `/ops/demo-mode` for external demo and call out live Cognee limitation honestly.
+- [x] Kill duplicate/orphan Python processes before live Cognee work.
+- [x] Pre-seed once and warm recall for a live `mode=cognee` demo (seed 21 docs ~794s, warm on boot).
+- [x] Run one GitHub/Telegram/live-chat conflict in `mode=cognee` (live_chat -> warned/conflict,
+      warnmode=cognee, evidence ADR-021; Codex session -> quarantined; proposal/check -> conflict 0.97).
+- [x] If graph remains empty or slow, use `/ops/demo-mode` for external demo and call out live Cognee limitation honestly.
 
 ### 3. Codex / Agent Session Integration
 
@@ -151,7 +152,8 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 - [x] Show memory-write conflict blocked/warned: `classification=conflict`, `can_remember=false`.
 - [x] Document proof in `docs/codex-live-proof.md`.
 - [x] Add screenshot-friendly Codex proof page in `docs/codex-proof-screenshot.html`.
-- [ ] Ensure quarantined content does not enter `improve()` when live Sentinel flags poisoning.
+- [x] Ensure quarantined content does not enter `improve()` when live Sentinel flags poisoning
+      (verified: poisoning feedback -> `improve_status=blocked_quarantined`, Cognee improve skipped).
 
 ### 4. Product Console Upgrade
 

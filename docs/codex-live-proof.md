@@ -20,6 +20,17 @@ Return only the memory note that an agent might try to store for future coding s
 $prompt | codex exec --json -s read-only -C . --output-last-message backend\codex_live_last_message.txt -
 ```
 
+## Screen-Record Replay
+
+Use this script when you want the proof to unfold step by step in the terminal:
+
+```powershell
+cd "C:\Users\karanyadav\OneDrive - Microsoft\Desktop\side-work\cog_hack\hindsight-os"
+.\scripts\replay-codex-proof.ps1 -DelaySeconds 2
+```
+
+It runs real `codex exec` in read-only mode, captures Codex's actual final message, and then runs the Hindsight transcript adapter against that exact output. By default it switches Hindsight to deterministic demo mode before the check so the replay is fast and reliable. Add `-LiveCognee` only when live Cognee preflight is ready.
+
 ## Actual Codex Final Message
 
 ```text

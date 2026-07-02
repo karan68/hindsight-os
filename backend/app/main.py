@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from app.codex_integration import CodexSessionCheckRequest, CodexSessionCheckResponse, check_codex_session
 from app.github_integration import GitHubPrCheckRequest, GitHubPrCheckResponse, check_github_pr
 from app.models import AskRequest, DemoState, FeedbackRequest, GraphSnapshot, ProposalRequest
 from app.service import (
@@ -118,6 +119,11 @@ async def github_pr_check(request: GitHubPrCheckRequest):
 @app.post("/integrations/telegram/update/test", response_model=TelegramProcessResponse)
 async def telegram_update_test(request: TelegramLocalTestRequest):
     return await process_telegram_update(request.update, post_message=request.post_message)
+
+
+@app.post("/integrations/codex/session/check", response_model=CodexSessionCheckResponse)
+async def codex_session_check(request: CodexSessionCheckRequest):
+    return await check_codex_session(request)
 
 
 @app.get("/simulator/scenarios", response_model=list[SimulatorScenario])

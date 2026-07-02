@@ -128,8 +128,11 @@ live_chat conflict in demo mode -> warned/conflict, ops=workstream.screen -> rec
 
 ### 3. Codex / Agent Session Integration
 
-- [ ] Verify actual capture path: transcript export, wrapper, logs, or API.
-- [ ] Send one real Codex/agent message into `/events/ingest`.
+- [x] Verify local Codex CLI exists (`codex.ps1`). No stable transcript export/API was proven.
+- [x] Add manual/wrapper transcript adapter:
+  - `POST /integrations/codex/session/check`
+  - `python -m app.codex_session --file transcript.txt`
+- [ ] Send one real Codex/agent transcript into the adapter.
 - [ ] Show memory-write conflict blocked/warned.
 - [ ] Ensure quarantined content does not enter `improve()`.
 
